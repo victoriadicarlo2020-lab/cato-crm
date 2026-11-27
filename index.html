@@ -37,6 +37,10 @@ svg{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:
 .lock-box p{color:var(--muted);font-size:13px;margin-bottom:22px}
 .lock-box input{width:100%;padding:13px 14px;border-radius:12px;border:1px solid var(--line);background:#0f0f0f;text-align:center;font-size:16px;letter-spacing:.08em;outline:none}
 .lock-box input:focus{border-color:var(--ambar)}
+.lock-box input+input{margin-top:10px}
+#apiUrl{font-size:13px;letter-spacing:0}
+.sync-ok{color:var(--ok)}.sync-busy{color:var(--ambar)}.sync-err{color:#ff6b81}
+.tag.tag-mut{color:var(--muted);background:#262626;margin-left:4px}
 .lock-box .btn{width:100%;justify-content:center;margin-top:12px;padding:13px}
 .lock-err{color:#ff6b81;font-size:13px;margin-top:10px;min-height:18px}
 .shake{animation:shake .35s}
@@ -146,8 +150,9 @@ header{position:sticky;top:0;z-index:20;background:rgba(13,13,13,.92);backdrop-f
     <img src="assets/cato-logo-branco.svg" alt="Cato Mídias">
     <h1>Painel interno</h1>
     <p>Funil de vendas · acesso restrito</p>
+    <input type="url" id="apiUrl" class="hidden" placeholder="Link do App da Web (…/exec)" aria-label="Link do App da Web da planilha">
     <input type="password" id="pass" placeholder="Senha" aria-label="Senha" autofocus>
-    <button class="btn btn-pri" type="submit">Entrar</button>
+    <button class="btn btn-pri" type="submit" id="btnEnter">Entrar</button>
     <div class="lock-err" id="lockErr"></div>
   </form>
 </section>
@@ -158,7 +163,7 @@ header{position:sticky;top:0;z-index:20;background:rgba(13,13,13,.92);backdrop-f
     <div class="top">
       <div class="brand">
         <img src="assets/cato-logo-branco.svg" alt="Cato Mídias">
-        <div><b>Funil de Vendas</b><span>CRM interno · dados salvos neste navegador</span></div>
+        <div><b>Funil de Vendas</b><span id="sync">Planilha Prospecção CATO</span></div>
       </div>
       <div class="actions">
         <button class="btn btn-pri" id="btnNew" data-i="plus"><span>Novo lead</span></button>
@@ -195,6 +200,10 @@ header{position:sticky;top:0;z-index:20;background:rgba(13,13,13,.92);backdrop-f
       <div class="f"><label for="fIg">Instagram</label>
         <div class="inrow"><input id="fIg" placeholder="@perfil"><a class="btn btn-ghost chip-ig" id="fIgGo" target="_blank" rel="noopener" title="Abrir Instagram" data-i="ig"></a></div></div>
     </div>
+    <div class="grid2">
+      <div class="f"><label for="fEnd">Endereço</label><input id="fEnd" placeholder="Rua, número - bairro"></div>
+      <div class="f"><label for="fWeb">Site atual</label><input id="fWeb" type="text" inputmode="url" placeholder="Site ou rede social que já usam"></div>
+    </div>
     <div class="f"><label for="fDemo">Link da demo</label>
       <div class="inrow"><input id="fDemo" type="text" inputmode="url" placeholder="https://realliving.website/demo-…"><button type="button" class="btn btn-ghost" id="fDemoCopy" title="Copiar link" data-i="copy"></button><a class="btn btn-ghost" id="fDemoGo" target="_blank" rel="noopener" title="Abrir demo" data-i="ext"></a></div></div>
     <div class="f"><label for="fObs">Observações</label><textarea id="fObs" placeholder="Endereço, nome do dono, melhor horário, o que foi conversado…"></textarea></div>
@@ -222,10 +231,14 @@ var STAGES = [
   {id:'neg',    name:'4. Em Negociação',     color:'#FCA001'},
   {id:'fechado',name:'5. Fechado',           color:'#1fa855'}
 ];
-var KEY_DATA = 'cato_crm_leads_v1';
-var KEY_PASS = 'cato_crm_pass_v1';
-var KEY_SESS = 'cato_crm_unlocked';
-var DEFAULT_PASS = 'cato2026';
+// Link do App da Web do Google Apps Script (termina em /exec).
+// Se ficar vazio, o painel pede o link na tela de entrada e guarda neste navegador.
+var API_URL = '';
+var KEY_URL = 'cato_crm_api_url';
+var KEY_SESS = 'cato_crm_senha';          // sessionStorage: senha da aba aberta
+var KEY_LEGADO = 'cato_crm_leads_v1';     // leads da versão antiga (só no navegador)
+var KEY_MIGRADO = 'cato_crm_migrado_v1';
+var SYNC_MS = 15000;                      // de quanto em quanto tempo busca novidades na planilha
 
 /* ================= Ícones (SVG inline) ================= */
 var I = {
@@ -243,6 +256,7 @@ var I = {
   ext:'<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   trash:'<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   check:'<path d="M20 6 9 17l-5-5"/>',
+  pin:'<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
   left:'<path d="m15 18-6-6 6-6"/>',
   right:'<path d="m9 18 6-6-6-6"/>',
   edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
@@ -295,73 +309,138 @@ function copyText(txt){
   });
 }
 
-/* ================= Armazenamento ================= */
+/* ================= Dados ================= */
 var leads=[];
-function load(){
-  try{var d=JSON.parse(localStorage.getItem(KEY_DATA)||'[]');leads=Array.isArray(d)?d.map(clean).filter(Boolean):[]}
-  catch(e){leads=[]}
-}
-function save(){
-  try{localStorage.setItem(KEY_DATA,JSON.stringify(leads))}
-  catch(e){alert('Não consegui salvar no navegador (armazenamento cheio ou bloqueado). Exporte um backup agora.')}
-}
 function clean(o){
   if(!o||typeof o!=='object') return null;
   var nome=String(o.nome||'').trim(); if(!nome) return null;
   var etapa=STAGES.some(function(s){return s.id===o.etapa})?o.etapa:'leads';
-  return {id:String(o.id||uid()),nome:nome,categoria:String(o.categoria||'').trim(),telefone:String(o.telefone||'').trim(),
-    instagram:String(o.instagram||'').trim(),demo:String(o.demo||'').trim(),obs:String(o.obs||''),etapa:etapa,
-    criadoEm:o.criadoEm||now(),atualizadoEm:o.atualizadoEm||now()};
+  var t=function(k){return String(o[k]==null?'':o[k]).trim()};
+  return {id:String(o.id||uid()),nome:nome,categoria:t('categoria'),telefone:t('telefone'),instagram:t('instagram'),
+    demo:t('demo'),endereco:t('endereco'),website:t('website'),situacao:t('situacao'),siteCato:t('siteCato'),
+    obs:String(o.obs||''),etapa:etapa,criadoEm:o.criadoEm||'',atualizadoEm:o.atualizadoEm||''};
 }
+function byId(id){return leads.find(function(l){return l.id===id})}
 
-/* ================= Senha ================= */
-async function hash(s){
-  if(window.crypto&&crypto.subtle){
-    var b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('cato-crm::'+s));
-    return 'sha256:'+Array.from(new Uint8Array(b)).map(function(x){return x.toString(16).padStart(2,'0')}).join('');
-  }
-  return 'plain:'+s; // fallback para navegadores sem crypto.subtle (ex.: arquivo aberto localmente)
+/* ================= Planilha (Google Apps Script) ================= */
+var senha='', pend=0, lastJson='', timer=null, dragging=false;
+function lsGet(k){try{return localStorage.getItem(k)||''}catch(e){return ''}}
+function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+function apiUrl(){return API_URL||lsGet(KEY_URL)}
+function api(acao,dados){
+  var url=apiUrl();
+  if(!url) return Promise.reject(Object.assign(new Error('Falta o link do App da Web.'),{codigo:'url'}));
+  return fetch(url,{method:'POST',redirect:'follow',
+      headers:{'Content-Type':'text/plain;charset=utf-8'}, // text/plain evita o bloqueio de CORS do Google
+      body:JSON.stringify(Object.assign({acao:acao,senha:senha},dados||{}))})
+    .catch(function(){throw Object.assign(new Error('Sem conexão com a planilha. Confira a internet e o link do App da Web.'),{codigo:'rede'})})
+    .then(function(r){return r.json().catch(function(){throw Object.assign(new Error('A planilha respondeu algo inesperado. Confira se o App da Web está publicado para "Qualquer pessoa".'),{codigo:'rede'})})})
+    .then(function(j){if(!j.ok) throw Object.assign(new Error(j.erro||'Erro na planilha.'),{codigo:j.codigo||''});return j});
 }
-async function checkPass(p){
-  var stored=localStorage.getItem(KEY_PASS);
-  if(!stored) return p===DEFAULT_PASS;
-  if(stored.indexOf('plain:')===0) return stored==='plain:'+p;
-  return stored===await hash(p);
+function setSync(state,msg){
+  var s=$('sync');s.className=state?'sync-'+state:'';
+  s.textContent=msg||({ok:'Sincronizado com a planilha',busy:'Salvando na planilha…',err:'Sem conexão com a planilha'})[state]||'';
 }
-function unlock(){
-  try{sessionStorage.setItem(KEY_SESS,'1')}catch(e){}
-  $('lock').classList.add('hidden');$('app').classList.remove('hidden');
-  load();render();
+function aplicar(lista){
+  var j=JSON.stringify(lista);
+  if(j===lastJson) return;
+  lastJson=j;leads=lista.map(clean).filter(Boolean);
+  if(!dragging) render();
 }
-$('lockForm').addEventListener('submit',async function(e){
+function puxar(forcar){
+  if(!senha||(pend&&!forcar)) return Promise.resolve();
+  if(!forcar&&document.hidden) return Promise.resolve();
+  return api('listar').then(function(j){
+    if(!pend) aplicar(j.leads);
+    setSync('ok','Sincronizado · '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}));
+  },falhou);
+}
+function falhou(e){
+  if(e.codigo==='senha'||e.codigo==='bloqueado'){travar(e.message);return}
+  setSync('err');
+}
+// grava na planilha; a tela já foi atualizada antes (resposta rápida) e é corrigida se der erro
+function enviar(acao,dados,okMsg){
+  pend++;setSync('busy');
+  return api(acao,dados).then(function(j){
+    pend--;if(okMsg) toast(okMsg);
+    if(!pend) puxar(true);
+    return j;
+  },function(e){
+    pend--;
+    if(e.codigo==='senha'||e.codigo==='bloqueado'){travar(e.message);throw e}
+    setSync('err');
+    alert('Não consegui salvar na planilha.\n'+e.message+'\n\nVou recarregar os dados que estão lá.');
+    lastJson='';puxar(true);
+    throw e;
+  });
+}
+function travar(msg){
+  senha='';clearInterval(timer);timer=null;
+  try{sessionStorage.removeItem(KEY_SESS)}catch(e){}
+  closeModal();
+  $('app').classList.add('hidden');$('lock').classList.remove('hidden');
+  $('lockErr').textContent=msg||'';
+  $('apiUrl').classList.toggle('hidden',!!apiUrl());
+  $('pass').value='';$('pass').focus();
+}
+function entrar(s){
+  senha=s;
+  return api('listar').then(function(j){
+    try{sessionStorage.setItem(KEY_SESS,s)}catch(e){}
+    $('lock').classList.add('hidden');$('app').classList.remove('hidden');
+    lastJson='';aplicar(j.leads);render();
+    setSync('ok');
+    clearInterval(timer);timer=setInterval(puxar,SYNC_MS);
+    migrarLegado();
+  },function(e){senha='';throw e});
+}
+// leads da versão antiga, que ficavam só neste navegador
+function migrarLegado(){
+  if(lsGet(KEY_MIGRADO)) return;
+  var antigos=[];try{antigos=JSON.parse(lsGet(KEY_LEGADO)||'[]').map(clean).filter(Boolean)}catch(e){}
+  if(!antigos.length){lsSet(KEY_MIGRADO,'1');return}
+  if(!confirm('Encontrei '+antigos.length+' lead(s) que estavam salvos só neste navegador.\n\nEnviar para a planilha agora? (quem já estiver lá com o mesmo nome não é duplicado)')) return;
+  enviar('importar',{leads:antigos,modo:'mesclar'}).then(function(r){
+    lsSet(KEY_MIGRADO,'1');
+    toast(r.adicionados+' lead(s) enviados para a planilha');
+  });
+}
+$('lockForm').addEventListener('submit',function(e){
   e.preventDefault();
-  var ok=await checkPass($('pass').value);
-  if(ok){$('pass').value='';$('lockErr').textContent='';unlock()}
-  else{
-    $('lockErr').textContent='Senha incorreta.';
+  var u=$('apiUrl').value.trim();
+  if(!$('apiUrl').classList.contains('hidden')){
+    if(!/^https:\/\/script\.google(usercontent)?\.com\//.test(u)){$('lockErr').textContent='Cole o link do App da Web (começa com https://script.google.com/).';return}
+    lsSet(KEY_URL,u);
+  }
+  var btn=$('btnEnter');btn.disabled=true;btn.textContent='Conectando…';$('lockErr').textContent='';
+  entrar($('pass').value).then(function(){$('pass').value=''},function(err){
+    $('lockErr').textContent=err.message;
+    if(err.codigo==='rede'||err.codigo==='url') $('apiUrl').classList.remove('hidden');
     var b=document.querySelector('.lock-box');b.classList.remove('shake');void b.offsetWidth;b.classList.add('shake');
     $('pass').select();
-  }
+  }).then(function(){btn.disabled=false;btn.textContent='Entrar'});
 });
-$('btnLock').addEventListener('click',function(){
-  try{sessionStorage.removeItem(KEY_SESS)}catch(e){}
-  $('app').classList.add('hidden');$('lock').classList.remove('hidden');$('pass').focus();
-});
-$('btnPass').addEventListener('click',async function(){
+$('btnLock').addEventListener('click',function(){travar('')});
+$('btnPass').addEventListener('click',function(){
   var atual=prompt('Senha atual:'); if(atual===null) return;
-  if(!await checkPass(atual)){alert('Senha atual incorreta.');return}
-  var nova=prompt('Nova senha (mínimo 4 caracteres):'); if(nova===null) return;
+  if(atual!==senha){alert('Senha atual incorreta.');return}
+  var nova=prompt('Nova senha (mínimo 4 caracteres).\nVale para você e para o Cael, em qualquer computador:'); if(nova===null) return;
   if(nova.length<4){alert('A senha precisa ter pelo menos 4 caracteres.');return}
   if(prompt('Repita a nova senha:')!==nova){alert('As senhas não conferem.');return}
-  localStorage.setItem(KEY_PASS,await hash(nova));
-  toast('Senha alterada neste navegador');
+  api('trocarSenha',{nova:nova}).then(function(){
+    senha=nova;try{sessionStorage.setItem(KEY_SESS,nova)}catch(e){}
+    toast('Senha alterada para todos');
+  },function(e){alert('Não consegui trocar a senha.\n'+e.message)});
 });
+document.addEventListener('visibilitychange',function(){if(!document.hidden) puxar()});
+window.addEventListener('focus',function(){puxar()});
 
 /* ================= Render ================= */
 var query='';
 function matches(l){
   if(!query) return true;
-  return norm([l.nome,l.categoria,l.telefone,l.instagram,l.obs].join(' ')).indexOf(query)>-1;
+  return norm([l.nome,l.categoria,l.telefone,l.instagram,l.endereco,l.situacao,l.obs].join(' ')).indexOf(query)>-1;
 }
 function render(){
   var board=$('board');board.innerHTML='';
@@ -392,7 +471,9 @@ function cardEl(l,si){
   var wa=waLink(l.telefone),ig=igLink(l.instagram),demo=safeUrl(l.demo);
   var h='<div class="card-t"><h3 data-act="edit">'+esc(l.nome)+'</h3><button class="icon-btn" data-act="edit" title="Editar">'+svg('edit')+'</button></div>';
   if(l.categoria) h+='<span class="tag">'+esc(l.categoria)+'</span>';
+  if(l.situacao) h+='<span class="tag tag-mut">'+esc(l.situacao)+'</span>';
   var meta='';
+  if(l.endereco) meta+='<div>'+svg('pin')+'<span title="'+esc(l.endereco)+'">'+esc(l.endereco)+'</span></div>';
   if(l.telefone) meta+='<div>'+svg('phone')+'<span>'+esc(l.telefone)+'</span></div>';
   if(l.instagram) meta+='<div>'+svg('ig')+'<span>@'+esc(igHandle(l.instagram))+'</span></div>';
   if(l.demo) meta+='<div>'+svg('link')+'<span>'+esc(l.demo.replace(/^https?:\/\//,''))+'</span></div>';
@@ -406,8 +487,8 @@ function cardEl(l,si){
     '<span class="sp"></span>'+
     '<button class="icon-btn" data-act="next" title="Próxima etapa"'+(si===STAGES.length-1?' disabled':'')+'>'+svg('right')+'</button></div>';
   c.innerHTML=h;
-  c.addEventListener('dragstart',function(e){e.dataTransfer.setData('text/plain',l.id);e.dataTransfer.effectAllowed='move';c.classList.add('dragging')});
-  c.addEventListener('dragend',function(){c.classList.remove('dragging')});
+  c.addEventListener('dragstart',function(e){dragging=true;e.dataTransfer.setData('text/plain',l.id);e.dataTransfer.effectAllowed='move';c.classList.add('dragging')});
+  c.addEventListener('dragend',function(){dragging=false;c.classList.remove('dragging')});
   c.addEventListener('click',function(e){
     var b=e.target.closest('[data-act]');if(!b) return;
     var a=b.dataset.act;
@@ -432,13 +513,15 @@ function renderCats(){
 function move(id,stage){
   var l=leads.find(function(x){return x.id===id});
   if(!l||l.etapa===stage) return;
-  l.etapa=stage;l.atualizadoEm=now();save();render();
+  dragging=false;
+  l.etapa=stage;l.atualizadoEm=now();render();
   var st=STAGES.find(function(s){return s.id===stage});
   toast(l.nome+' → '+st.name);
+  enviar('salvar',{lead:{id:id,etapa:stage}}).catch(function(){});
 }
 
 /* ================= Modal ================= */
-var editing=null;
+var editingId=null;
 $('fEtapa').innerHTML=STAGES.map(function(s){return '<option value="'+s.id+'">'+esc(s.name)+'</option>'}).join('');
 function syncLinks(){
   var wa=waLink($('fTel').value),ig=igLink($('fIg').value),demo=safeUrl($('fDemo').value);
@@ -453,18 +536,23 @@ $('fDemoCopy').addEventListener('click',function(){
   copyText(u).then(function(){toast('Link da demo copiado')},function(){prompt('Copie o link:',u)});
 });
 function openModal(id,stage){
-  editing=id?leads.find(function(l){return l.id===id}):null;
-  var l=editing||{nome:'',categoria:'',telefone:'',instagram:'',demo:'',obs:'',etapa:stage||'leads'};
+  var editing=id?byId(id):null;
+  editingId=editing?editing.id:null;
+  var l=editing||{nome:'',categoria:'',telefone:'',instagram:'',demo:'',endereco:'',website:'',obs:'',etapa:stage||'leads'};
   $('mTitle').textContent=editing?'Editar lead':'Novo lead';
   $('fNome').value=l.nome;$('fCat').value=l.categoria;$('fTel').value=l.telefone;$('fIg').value=l.instagram;
-  $('fDemo').value=l.demo;$('fObs').value=l.obs;$('fEtapa').value=l.etapa;
+  $('fDemo').value=l.demo;$('fEnd').value=l.endereco;$('fWeb').value=l.website;$('fObs').value=l.obs;$('fEtapa').value=l.etapa;
   $('mDel').classList.toggle('hidden',!editing);
-  $('mInfo').textContent=editing?'Criado em '+fmtDate(l.criadoEm)+' · Atualizado em '+fmtDate(l.atualizadoEm):'';
+  var info=[];
+  if(editing&&l.criadoEm) info.push('Criado em '+fmtDate(l.criadoEm));
+  if(editing&&l.atualizadoEm) info.push('Atualizado em '+fmtDate(l.atualizadoEm));
+  if(editing&&l.siteCato) info.push('Site Cato: '+l.siteCato);
+  $('mInfo').textContent=info.join(' · ');
   syncLinks();
   $('ov').classList.remove('hidden');
   setTimeout(function(){$('fNome').focus()},30);
 }
-function closeModal(){$('ov').classList.add('hidden');editing=null}
+function closeModal(){$('ov').classList.add('hidden');editingId=null}
 $('mClose').addEventListener('click',closeModal);
 $('mCancel').addEventListener('click',closeModal);
 $('ov').addEventListener('mousedown',function(e){if(e.target===$('ov'))closeModal()});
@@ -472,18 +560,23 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!$('ov').cl
 $('form').addEventListener('submit',function(e){
   e.preventDefault();
   var nome=$('fNome').value.trim();if(!nome) return;
-  var dup=leads.find(function(l){return norm(l.nome)===norm(nome)&&l!==editing});
+  var dup=leads.find(function(l){return norm(l.nome)===norm(nome)&&l.id!==editingId});
   if(dup&&!confirm('Já existe um lead chamado "'+dup.nome+'". Salvar mesmo assim?')) return;
   var data={nome:nome,categoria:$('fCat').value.trim(),telefone:$('fTel').value.trim(),instagram:$('fIg').value.trim(),
-    demo:$('fDemo').value.trim(),obs:$('fObs').value,etapa:$('fEtapa').value,atualizadoEm:now()};
-  if(editing) Object.assign(editing,data);
-  else leads.push(Object.assign({id:uid(),criadoEm:now()},data));
-  save();closeModal();render();toast('Lead salvo');
+    demo:$('fDemo').value.trim(),endereco:$('fEnd').value.trim(),website:$('fWeb').value.trim(),obs:$('fObs').value,etapa:$('fEtapa').value};
+  var cur=editingId?byId(editingId):null;
+  if(editingId&&!cur){alert('Esse lead foi excluído por outra pessoa enquanto você editava.');closeModal();return}
+  if(cur) Object.assign(cur,data,{atualizadoEm:now()});
+  else{cur=Object.assign({id:uid(),criadoEm:now(),atualizadoEm:now()},data);leads.push(cur)}
+  closeModal();render();
+  enviar('salvar',{lead:Object.assign({id:cur.id},data)},'Lead salvo na planilha').catch(function(){});
 });
 $('mDel').addEventListener('click',function(){
-  if(!editing||!confirm('Excluir "'+editing.nome+'"? Essa ação não pode ser desfeita.')) return;
-  var n=editing.nome;leads=leads.filter(function(l){return l!==editing});
-  save();closeModal();render();toast(n+' excluído');
+  var cur=editingId?byId(editingId):null;
+  if(!cur||!confirm('Excluir "'+cur.nome+'"?\nA linha dele será apagada da planilha. (Dá para recuperar pelo histórico de versões do Google Sheets.)')) return;
+  leads=leads.filter(function(l){return l!==cur});
+  closeModal();render();
+  enviar('excluir',{id:cur.id},cur.nome+' excluído').catch(function(){});
 });
 $('btnNew').addEventListener('click',function(){openModal(null,'leads')});
 $('q').addEventListener('input',function(e){query=norm(e.target.value);render()});
@@ -515,7 +608,9 @@ var COLS={
   categoria:['categoria','category','tipo','segmento','nicho','type','categories','categorias'],
   telefone:['telefone','phone','whatsapp','celular','fone','tel','contato','phone number','telefone/whatsapp','numero'],
   instagram:['instagram','insta','ig','@'],
-  demo:['demo','link da demo','link demo','site demo'],
+  demo:['demo','link da demo','link demo','site demo','link de acesso a demonstracao'],
+  endereco:['endereco','address','endereço','localizacao','rua'],
+  website:['website','site','site atual','url','web'],
   obs:['observacoes','observacao','obs','notas','notes']
 };
 function mapHeader(h){
@@ -548,7 +643,7 @@ function importRows(text){
     return;
   }
   var existing={};leads.forEach(function(l){existing[norm(l.nome)]=1});
-  var added=0,dups=0,empty=0;
+  var novos=[],dups=0,empty=0;
   rows.slice(1).forEach(function(r){
     var get=function(k){return idx[k]===undefined?'':String(r[idx[k]]||'').trim()};
     var nome=get('nome');
@@ -562,16 +657,19 @@ function importRows(text){
       return (!m.used[j]&&v&&h.trim())?h.trim()+': '+v:'';
     }).filter(Boolean);
     var obs=[get('obs')].concat(extra).filter(Boolean).join('\n');
-    leads.push({id:uid(),nome:nome,categoria:get('categoria'),telefone:get('telefone'),instagram:get('instagram'),
-      demo:get('demo'),obs:obs,etapa:'leads',criadoEm:now(),atualizadoEm:now()});
-    added++;
+    novos.push({id:uid(),nome:nome,categoria:get('categoria'),telefone:get('telefone'),instagram:get('instagram'),
+      demo:get('demo'),endereco:get('endereco'),website:get('website'),obs:obs,etapa:'leads',criadoEm:now()});
   });
-  save();render();
-  var msg=added+' lead(s) importado(s) para "1. Leads"';
-  if(dups) msg+=' · '+dups+' já existiam (ignorados)';
-  if(empty) msg+=' · '+empty+' linha(s) sem nome';
-  toast(msg);
-  if(dups||empty) setTimeout(function(){alert(msg)},50);
+  if(!novos.length){alert('Nenhum lead novo para importar.'+(dups?'\n'+dups+' já existiam.':'')+(empty?'\n'+empty+' linha(s) sem nome.':''));return}
+  toast('Enviando '+novos.length+' lead(s) para a planilha…');
+  enviar('importar',{leads:novos,modo:'novos'}).then(function(r){
+    aplicar(r.leads);
+    var msg=r.adicionados+' lead(s) importado(s) para "1. Leads"';
+    if(dups+r.ignorados) msg+=' · '+(dups+r.ignorados)+' já existiam (ignorados)';
+    if(empty) msg+=' · '+empty+' linha(s) sem nome';
+    toast(msg);
+    if(dups||empty||r.ignorados) setTimeout(function(){alert(msg)},50);
+  }).catch(function(){});
 }
 
 /* ================= Backup ================= */
@@ -596,28 +694,20 @@ $('fileJson').addEventListener('change',function(e){
     var arr=Array.isArray(data)?data:(data&&Array.isArray(data.leads)?data.leads:null);
     if(!arr){alert('Esse arquivo não parece um backup do CRM da Cato.');return}
     var novos=arr.map(clean).filter(Boolean);
-    var msg='O backup tem '+novos.length+' lead(s).\n\nOK = SUBSTITUIR tudo o que está aqui ('+leads.length+' leads atuais) pelo backup.\nCancelar = escolher outra opção.';
-    if(confirm(msg)){
-      leads=novos;
-    }else if(confirm('Quer MESCLAR o backup com os dados atuais?\n(leads com o mesmo nome são atualizados pela versão mais recente; os novos são adicionados)')){
-      var byName={};leads.forEach(function(l){byName[norm(l.nome)]=l});
-      novos.forEach(function(n){
-        var cur=byName[norm(n.nome)];
-        if(!cur){leads.push(n);byName[norm(n.nome)]=n}
-        else if((n.atualizadoEm||'')>(cur.atualizadoEm||'')) Object.assign(cur,n,{id:cur.id});
-      });
-    }else return;
-    save();render();toast('Backup restaurado · '+leads.length+' leads');
+    if(!confirm('O backup tem '+novos.length+' lead(s).\n\nEnviar para a planilha?\n· Leads novos são adicionados.\n· Leads que já estão lá só são atualizados se a versão do backup for mais recente.\n· Nada é apagado da planilha.')) return;
+    enviar('importar',{leads:novos,modo:'mesclar'}).then(function(r){
+      aplicar(r.leads);
+      toast('Backup restaurado · '+r.adicionados+' novo(s), '+r.atualizados+' atualizado(s)');
+    }).catch(function(){});
   };
   rd.readAsText(file,'UTF-8');
 });
 
 /* ================= Início ================= */
 paintIcons();
-var sess=false;try{sess=sessionStorage.getItem(KEY_SESS)==='1'}catch(e){}
-if(sess) unlock();
-// sincroniza se o painel estiver aberto em outra aba
-window.addEventListener('storage',function(e){if(e.key===KEY_DATA&&!$('app').classList.contains('hidden')){load();render()}});
+if(!apiUrl()) $('apiUrl').classList.remove('hidden');
+var sess='';try{sess=sessionStorage.getItem(KEY_SESS)||''}catch(e){}
+if(sess&&apiUrl()) entrar(sess).catch(function(e){$('lockErr').textContent=e.message});
 })();
 </script>
 </body>
