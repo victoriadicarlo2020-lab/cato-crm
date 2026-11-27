@@ -34,10 +34,9 @@ Leva uns 10 minutos e só precisa ser feito uma vez. Depois disso, você e o Cae
 ## 4. Entrar no painel
 
 1. Abra https://victoriadicarlo2020-lab.github.io/cato-crm/
-2. Na primeira vez, cole o link `/exec` no campo **Link do App da Web** e digite a senha.
-3. O navegador guarda o link, e das próximas vezes só a senha é pedida.
+2. Digite a senha. O link do App da Web já está fixo no código (`var API_URL` no `index.html`), então não precisa colar nada.
 
-Se quiser que o link nunca precise ser colado, mande ele para quem cuida do código colocar na linha `var API_URL = '';` do `index.html`.
+Se um dia você criar uma **implantação nova** (em vez de editar a existente), o link `/exec` muda e precisa ser atualizado nessa linha do `index.html`.
 
 ## Como funciona no dia a dia
 
